@@ -479,3 +479,14 @@ uintptr_t _beginthreadex( // NATIVE CODE
 **C++11提供的std::thread类**
 C++11新标准引入了std::thread(头文件thread)，使用这个类可以将任意签名形式的函数作为线程函数。std::thread对象在线程函数运行期间必须是有效的，也可以通过detach方法让线程与线程对象脱离关系(**不推荐这么做**)。
 
+### 3.2.2 获取线程id
+
+获取当前线程id：
+- phtread_t pthread_self();     //Linux
+- DWORD GetCurrentThreadId();   //win
+
+查看一个进程的线程数量：
+- pstack pid    //Linux，程序必须有调试符号
+- 任务管理器    //win
+- syscall(SYS_gettid)   //Linux,系统调用
+
