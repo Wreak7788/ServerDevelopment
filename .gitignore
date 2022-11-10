@@ -3,3 +3,4 @@ id_rsa*
 *.out
 *.exe
 .gitignore
+.vscode/

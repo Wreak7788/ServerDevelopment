@@ -436,3 +436,46 @@ HANDLE CreateThread(
   LPDWORD lpThreadId                         // pointer to receive thread ID
 );
 ```
+
+例子：
+```C
+#include<Windows.h>
+#include<stdio.h>
+
+DWORD WINAPI ThreadProc(LPVOID lpParameters){
+    while(TRUE){
+        Sleep(1000);
+        printf("I am child thread\n");
+    }
+    return 0;
+}
+
+int main()
+{
+    DWORD dwThreadId;
+    HANDLE hThread = CreateThread(NULL, 0, ThreadProc, NULL, 0, &dwThreadId);
+    if(hThread == NULL){
+        printf("Failed to CreateThread.\n");
+        return -1;
+    }
+
+    while(1){}
+    return 0;
+}
+```
+
+在实际开发中推荐使用CRT提供的线程创建函数：_beginthreadex，位于process.h头文件。
+```C
+uintptr_t _beginthreadex( // NATIVE CODE
+   void *security,
+   unsigned stack_size,
+   unsigned ( __stdcall *start_address )( void * ),
+   void *arglist,
+   unsigned initflag,
+   unsigned *thrdaddr
+);
+```
+
+**C++11提供的std::thread类**
+C++11新标准引入了std::thread(头文件thread)，使用这个类可以将任意签名形式的函数作为线程函数。std::thread对象在线程函数运行期间必须是有效的，也可以通过detach方法让线程与线程对象脱离关系(**不推荐这么做**)。
+
