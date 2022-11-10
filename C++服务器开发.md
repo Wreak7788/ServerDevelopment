@@ -359,3 +359,80 @@ std::shared_ptr<int> s = sp2.lock();
 
 **VisualGDB:远程调试Linux程序**
 
+# 第三章 多线程编程与资源同步
+
+## 3.1 基本原理
+
+> 在windows系统中，主线程退出时，支线程即使没执行完逻辑也会退出。在（某些）Linux系统中，如果主线程退出，支线程一般不会收到影响，但是会变成僵尸进程。在实际开发中应该避免这类情况。
+
+> 一个线程崩溃是否会对其他线程产生影响？一般来说，每个线程都是独立执行的单位，有自己的上下文堆栈，一个线程崩溃不会影响其他线程。但在通常情况下一个线程崩溃也会导致整个进程退出，例如在Linux系统中会产生一个Segment Fault的段错误，操作系统对这个信号的默认处理就是结束进程。
+
+## 3.2 线程基本操作
+
+### 3.2.1 创建线程
+
+**Linux平台**
+```C
+#include <pthread.h>
+//thread为输出参数，可以得到线程id；attr指定线程属性，NULL表示使用默认属性；
+//start_routine指定线程函数，调用方式必须是_cdecl，这是在C/C++中定义全局函数时默认的调用方式
+//arg用于在创建线程是将某个参数传入线程函数中
+//成功返回0，失败返回错误码
+int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg);
+
+//不指定函数调用方式，默认为__cdecl
+void* start_routine(void* args){
+    //..
+}
+
+//显示指定函数调用方式
+void* __cdecl start_routine(void* args)
+{
+    //..
+}
+```
+
+例子：编译时需要加-pthread
+```C
+#include<pthread.h>
+#include<unistd.h>
+#include<stdio.h>
+
+void* threadFunc(void* arg)
+{
+    while(1)
+    {
+        sleep(1);
+        printf("I am child thread\n");
+    }
+    return NULL;
+}
+
+int main()
+{
+  pthread_t threadId;
+  pthread_create(&threadId, NULL, threadFunc, NULL);
+
+  while(1)
+  {
+  }
+  return 0;
+}
+```
+
+
+**windows平台**
+> windows中使用句柄(HANDLE类型)来管理线程对象，本质上是内核句柄表中的索引值。
+```C
+HANDLE CreateThread(
+  LPSECURITY_ATTRIBUTES lpThreadAttributes,  // pointer to security attributes, usually NULL
+  DWORD dwStackSize,                         // initial thread stack size, usually 0 to use default value
+  LPTHREAD_START_ROUTINE lpStartAddress,     // pointer to thread function, 调用方式必须是__stdcall, WINAPI和CALLBACK两个宏值为__stdcall
+  LPVOID lpParameter,                        // argument for new thread, typedef void* LPVOID;
+
+  //对于dwCreationFlags，一般设置为0，代表创建好线程后立即启动；
+  //也可以将其设置为CREATE_SUSPENDED(4)，在需要时通过ResumeThread这个API运行。
+  DWORD dwCreationFlags,                     // creation flags
+  LPDWORD lpThreadId                         // pointer to receive thread ID
+);
+```

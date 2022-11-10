@@ -1,1 +1,5 @@
 id_rsa*
+*.txt
+*.out
+*.exe
+.gitignore
