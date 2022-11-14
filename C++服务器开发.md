@@ -484,6 +484,7 @@ C++11新标准引入了std::thread(头文件thread)，使用这个类可以将�
 获取当前线程id：
 - phtread_t pthread_self();     //Linux
 - DWORD GetCurrentThreadId();   //win
+- std::this_thread.get_id();    //C++11
 
 查看一个进程的线程数量：
 - pstack pid    //Linux，程序必须有调试符号
