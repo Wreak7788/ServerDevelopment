@@ -12,10 +12,10 @@ int main()
 {
   std::thread t(worker_thread_func);
   std::thread::id worker_id = t.get_id();
-  std::cout<<"worker thread id" << worker_id << std::endl;
+  std::cout<<"worker thread id:" << worker_id << std::endl;
 
   //get main thread id
-  std::thread::id main_id = std::this_thread.get_id();
+  std::thread::id main_id = std::this_thread::get_id();
   //convert thread::id to ostringstream
   std::ostringstream oss;
   oss << main_id;
