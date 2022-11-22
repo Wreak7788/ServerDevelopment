@@ -244,7 +244,8 @@ std::unique_ptr<Socket, decltype(deletor)> spSocket(new Socket(), deletor);
   - 注意循环引用问题，一个资源的生命周期可以交给一个智能指针对象管理，但是该智能指针的生命周期不可以在交给该资源管理。
 
 ```C++
-//在实际开发中有时需要在类中包裹返回当前对象的一个shared_ptr给外部使用，有此要求的类只需要继承自std::enable_shared_from_this<T>模版对象即可
+//在实际开发中有时需要在类中包裹返回当前对象的一个shared_ptr给外部使用，
+//有此要求的类只需要继承自std::enable_shared_from_this<T>模版对象即可
 #include<memory>
 class A:public std::enbale_shared_from_this<A>{
 public:
@@ -632,3 +633,68 @@ int main()
 
 **C++11的线程等待函数**
 - std::thread的join方法，目标线程必须是可join的，可以通过joinable方法判断
+
+```C++
+#include<stdio.h>
+#include<string.h>
+#include<time.h>
+#include<thread>
+
+#define TIME_FILENAME "time.txt"
+
+void fileThreadFunc()
+{
+  time_t now = time(NULL);
+  struct tm* t = localtime(&now);
+  char timeStr[32] = {0};
+  snprintf(timeStr, 32, "%04d/%02d/%02d %02d:%02d:%02d",
+      t->tm_year+1900,
+      t->tm_mon+1,
+      t->tm_mday,
+      t->tm_hour,
+      t->tm_min,
+      t->tm_sec);
+  FILE* fp = fopen(TIME_FILENAME, "w");
+  if(fp == NULL)
+  {
+    printf("Failed to create time.txt.\n");
+    return;
+  }
+  size_t sizeToWrite = strlen(timeStr)+1;
+  size_t ret = fwrite(timeStr, 1, sizeToWrite, fp);
+  if(ret != sizeToWrite)
+    printf("Wirte file error.\n");
+  fclose(fp);
+  return;
+}
+
+int main()
+{
+  std::thread t(fileThreadFunc);
+  if(t.joinable())
+  {
+    t.join();
+  }
+  
+  FILE* fp = fopen(TIME_FILENAME, "r");
+  if( fp == NULL)
+  {
+    printf("open file error.\n");
+    return -2;
+  }
+  char buf[32] = {0};
+  int sizeRead = fread(buf, 1, 32, fp);
+  if(sizeRead == 0)
+  {
+    printf("Read file error.\n");
+    fclose(fp);
+    return -3;
+  }
+  printf("Current Time is: %s.\n", buf);
+  fclose(fp);
+  return 0;
+}
+```
+
+> 如果使用C++面向对象的方法对线程函数进行封装，线程函数就不能是类的实例方法，只能是静态方法，因为线程函数签名必须是指定格式，对于类实例方法，在翻译时编译器会将对象地址作为第一个参数传递给方法，因此编译后的方法签名就不符合指定格式了。
+> 如果使用静态方法，就无法访问类的实例方法了，为了解决这个问题，通常会在创建线程时将当前对象的地址（this指针）传递给线程函数，然后在线程函数中将该指针转换为原来的类实例，再通过这个实例访问类的所有方法。
