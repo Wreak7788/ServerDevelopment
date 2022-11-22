@@ -491,3 +491,144 @@ C++11新标准引入了std::thread(头文件thread)，使用这个类可以将�
 - 任务管理器    //win
 - syscall(SYS_gettid)   //Linux,系统调用
 
+### 3.2.3 等待线程结束
+
+**Linux**
+- int pthread_join(pthread_t thread, void **retval);
+
+```C++
+#include<stdio.h>
+#include<string.h>
+#include<pthread.h>
+
+#define TIME_FILENAME "time.txt"
+
+void* fileThreadFunc(void* arg)
+{
+  time_t now = time(NULL);
+  struct tm* t = localtime(&now);
+  char timeStr[32] = {0};
+  snprintf(timeStr, 32, "%04d/%02d/%02d %02d:%02d:%02d",
+      t->tm_year+1900,
+      t->tm_mon+1,
+      t->tm_mday,
+      t->tm_hour,
+      t->tm_min,
+      t->tm_sec);
+  FILE* fp = fopen(TIME_FILENAME, "w");
+  if(fp == NULL)
+  {
+    printf("Failed to create time.txt.\n");
+    return NULL;
+  }
+  size_t sizeToWrite = strlen(timeStr)+1;
+  size_t ret = fwrite(timeStr, 1, sizeToWrite, fp);
+  if(ret != sizeToWrite)
+    printf("Wirte file error.\n");
+  fclose(fp);
+  return NULL;
+}
+
+int main()
+{
+  pthread_t fileThreadID;
+  int ret = pthread_create(&fileThreadID, NULL, fileThreadFunc, NULL);
+  if(ret != 0)
+  {
+    printf("Failed to create fileThread.\n");
+    return -1;
+  }
+  int* retval;
+  pthread_join(fileThreadID, (void**) &retval);
+  FILE* fp = fopen(TIME_FILENAME, "r");
+  if( fp == NULL)
+  {
+    printf("open file error.\n");
+    return -2;
+  }
+  char buf[32] = {0};
+  int sizeRead = fread(buf, 1, 32, fp);
+  if(sizeRead == 0)
+  {
+    printf("Read file error.\n");
+    fclose(fp);
+    return -3;
+  }
+  printf("Current Time is: %s.\n", buf);
+  fclose(fp);
+  return 0;
+}
+```
+
+**windows**
+- WaitForSingleObject
+- WaitForMultipleObjects
+
+```C++
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <Windows.h>
+
+#define TIME_FILENAME "time.txt"
+
+DWORD WINAPI FileThreadFunc(LPVOID lpParameters)
+{
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char timeStr[32] = {0};
+    snprintf(timeStr, 32, "%04d/%02d/%02d %02d:%02d:%02d",
+             t->tm_year + 1900,
+             t->tm_mon + 1,
+             t->tm_mday,
+             t->tm_hour,
+             t->tm_min,
+             t->tm_sec);
+    FILE *fp = fopen(TIME_FILENAME, "w");
+    if (fp == NULL)
+    {
+        printf("Failed to create time.txt.\n");
+        return NULL;
+    }
+    size_t sizeToWrite = strlen(timeStr) + 1;
+    size_t ret = fwrite(timeStr, 1, sizeToWrite, fp);
+    if (ret != sizeToWrite)
+        printf("Wirte file error.\n");
+    fclose(fp);
+    return NULL;
+}
+
+int main()
+{
+    DWORD dwFileThreadID;
+    HANDLE hFileThread = CreateThread(NULL, 0, FileThreadFunc, NULL, 0, 
+    &dwFileThreadID);
+    if (hFileThread == NULL)
+    {
+        printf("Failed to create fileThread.\n");
+        return -1;
+    }
+    WaitForSingleObject(hFileThread, INFINITE);
+    
+    FILE *fp = fopen(TIME_FILENAME, "r");
+    if (fp == NULL)
+    {
+        printf("open file error.\n");
+        return -2;
+    }
+    char buf[32] = {0};
+    int sizeRead = fread(buf, 1, 32, fp);
+    if (sizeRead == 0)
+    {
+        printf("Read file error.\n");
+        fclose(fp);
+        return -3;
+    }
+    printf("Current Time is: %s.\n", buf);
+    fclose(fp);
+    return 0;
+}
+```
+
+**C++11的线程等待函数**
+- std::thread的join方法，目标线程必须是可join的，可以通过joinable方法判断
