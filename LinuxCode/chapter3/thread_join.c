@@ -1,11 +1,10 @@
 #include<stdio.h>
 #include<string.h>
-#include<time.h>
-#include<thread>
+#include<pthread.h>
 
 #define TIME_FILENAME "time.txt"
 
-void fileThreadFunc()
+void* fileThreadFunc(void* arg)
 {
   time_t now = time(NULL);
   struct tm* t = localtime(&now);
@@ -21,24 +20,27 @@ void fileThreadFunc()
   if(fp == NULL)
   {
     printf("Failed to create time.txt.\n");
-    return;
+    return NULL;
   }
   size_t sizeToWrite = strlen(timeStr)+1;
   size_t ret = fwrite(timeStr, 1, sizeToWrite, fp);
   if(ret != sizeToWrite)
     printf("Wirte file error.\n");
   fclose(fp);
-  return;
+  return NULL;
 }
 
 int main()
 {
-  std::thread t(fileThreadFunc);
-  if(t.joinable())
+  pthread_t fileThreadID;
+  int ret = pthread_create(&fileThreadID, NULL, fileThreadFunc, NULL);
+  if(ret != 0)
   {
-    t.join();
+    printf("Failed to create fileThread.\n");
+    return -1;
   }
-  
+  int* retval;
+  pthread_join(fileThreadID, (void**) &retval);
   FILE* fp = fopen(TIME_FILENAME, "r");
   if( fp == NULL)
   {
