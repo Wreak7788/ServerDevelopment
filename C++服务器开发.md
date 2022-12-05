@@ -807,3 +807,78 @@ int sem_wait(sem_t *sem);
 int sem_trywait(sem_t *sem);
 int sem_timedwait(sem_t *sem， const struct timespec* abs_timeout);
 ```
+
+### 3.5.3 Linux条件变量
+pthread_cond_t
+```C++
+#include <pthread.h>
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+
+int pthread_cond_init(pthread_cond_t *cond, pthread_condattr_t *cond_attr);
+
+int pthread_cond_signal(pthread_cond_t *cond);
+
+int pthread_cond_broadcast(pthread_cond_t *cond);
+
+int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex);
+
+int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const struct timespec *abstime);
+
+int pthread_cond_destroy(pthread_cond_t *cond);
+```
+
+- pthread_cond_wait在阻塞时，会释放其绑定的互斥体并阻塞线程。**因此在调用前需要对互斥体进行加锁**
+- pthread_cond_wait在收到信号时，会返回并对其绑定的互斥体进行加锁，**因此在调用后需要对互斥体进行解锁。**
+
+**虚假唤醒**，条件变量唤醒之后再次测试条件是否满足就可以解决虚假唤醒问题。因此使用while循环而不是if。
+
+> 如果一个条件变量信号在产生时，没有相关线程调用pthread_cond_wait捕获该信号，那么该信号就会永久丢失，再次调用pthread_cond_wait就用导致永久阻塞。**要确保在发送条件信号之前调用pthread_cond_wait。**
+
+### 3.5.4 Linux读写锁
+读锁共享，写锁独占。
+
+```C++
+#include <pthread.h>
+int pthread_rwlock_init(pthread_rwlock_t * restrict lock,
+    const pthread_rwlockattr_t * restrict attr);
+
+pthread_rwlock_t lock = PTHREAD_RWLOCK_INITIALIZER;
+
+int pthread_rwlock_destroy(pthread_rwlock_t *lock);
+
+int pthread_rwlock_rdlock(pthread_rwlock_t *lock);
+
+int pthread_rwlock_timedrdlock(pthread_rwlock_t * restrict lock,
+    const struct timespec * restrict abstime);
+
+int pthread_rwlock_tryrdlock(pthread_rwlock_t *lock);
+
+int pthread_rwlock_wrlock(pthread_rwlock_t *lock);
+
+int pthread_rwlock_timedwrlock(pthread_rwlock_t * restrict lock,
+    const struct timespec * restrict abstime);
+
+int pthread_rwlock_trywrlock(pthread_rwlock_t *lock);
+
+int pthread_rwlock_unlock(pthread_rwlock_t *lock);
+```
+
+读写锁的属性：
+```C++
+//pthread_rwlockattr_t
+enum
+{
+  PTHREAD_RWLOCK_PREFER_READER_NP,  //读者优先
+  PTHREAD_RWLOCK_PREFER_WRITER_NP,  //读者优先
+  PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP, //写者优先
+  PTHREAD_RWLOCK_DEFAULT_NP = PTHREAD_RWLOCK_PREFER_READER_NP
+};
+int pthread_rwlockattr_setkind_np(pthread_rwlockattr_t *attr,
+                      int pref);
+int pthread_rwlockattr_getkind_np(
+                      const pthread_rwlockattr_t *restrict attr,
+                      int *restrict pref);
+```
+
+## 3.6 windows线程同步对象
+
