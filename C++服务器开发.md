@@ -699,5 +699,111 @@ int main()
 
 > 如果使用C++面向对象的方法对线程函数进行封装，线程函数就不能是类的实例方法，只能是静态方法，因为线程函数签名必须是指定格式，对于类实例方法，在翻译时编译器会将对象地址作为第一个参数传递给方法，因此编译后的方法签名就不符合指定格式了。
 > 如果使用静态方法，就无法访问类的实例方法了，为了解决这个问题，通常会在创建线程时将当前对象的地址（this指针）传递给线程函数，然后在线程函数中将该指针转换为原来的类实例，再通过这个实例访问类的所有方法。
->
-> 
+
+## 3.4 整型变量的原子操作
+
+### 3.4.1 不是原子类型的整形变量操作
+- 给整形变量赋值：int a = 1;[编译器优化策略]
+- 自增/自减：a++;--a; [3条汇编]
+- 将一个变量赋值给另一个变量：int b = a;  [2条汇编]
+
+### 3.4.2 windows对整型变量的原子操作
+Interlocked系列函数（部分）：
+```C++
+LONG InterlockedAdd(
+	LONG volatile *Addend,
+	LONG          Value
+);
+LONG InterlockedIncrement(
+	LONG volatile *Addend
+);
+LONG InterlockedAnd(
+	LONG volatile *Destination,
+	LONG          Value
+);
+LONG InterlockedExchangeAdd(
+	LONG volatile *Addend,
+	LONG          Value
+);
+LONG InterlockedExchange(
+	LONG volatile *Target,
+	LONG 		  Value
+);
+LONG InterlockedCompareExchange(
+	LONG volatile *Destination,
+	LONG          ExChange,
+	LONG          Comperand
+);
+```
+
+### 3.4.3 C++11对整型变量原子操作的支持
+
+**std::atomic**，这是一个模板类型，可以传入具体整型（bool, char, short, int, uint等）https://en.cppreference.com/w/cpp/atomic/atomic
+```C++
+#include<atomic>
+#include<stdio.h>
+
+int main()
+{
+  std::atomic<int> value;
+  value = 99;
+  printf("%d\n", (int)value);
+
+  value++;
+  printf("%d\n", (int)value);
+  return 0;
+}
+```
+
+## 3.5 Linux线程同步对象
+
+### 3.5.1 Linux互斥体
+http://www.cs.kent.edu/~ruttan/sysprog/lectures/multi-thread/pthread_mutex_init.html
+```C++
+#include <pthread.h>
+pthread_mutex_t fastmutex = PTHREAD_MUTEX_INITIALIZER;
+
+pthread_mutex_t recmutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+
+pthread_mutex_t errchkmutex = PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP;
+
+int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *mutexattr);
+
+int pthread_mutex_lock(pthread_mutex_t *mutex);
+
+int pthread_mutex_trylock(pthread_mutex_t *mutex);
+
+int pthread_mutex_unlock(pthread_mutex_t *mutex);
+
+int pthread_mutex_destroy(pthread_mutex_t *mutex);
+```
+- 无需销毁用PTHREAD_MUTEX_INITIALIZER初始化的互斥体
+- 不要销毁一个已经加锁或正在被条件变量使用的互斥体对象
+
+```C++
+  int pthread_mutexattr_init(pthread_mutexattr_t *attr);
+  int pthread_mutexattr_destroy(pthread_mutexattr_t *attr);
+  int pthread_mutexattr_gettype(const pthread_mutexattr_t *attr, int *type);
+  int pthread_mutexattr_settype(pthread_mutexattr_t *attr, int type);
+```
+type类型：
+- PTHREAD_MUTEX_NORMAL(普通锁)，默认属性，加锁后其他线程会阻塞在lock处。一个线程如果对一个已经加锁的普通锁再次使用lock，则会阻塞在第二次调用lock代码处。
+- PTHREAD_MUTEX_ERRORCHECK(检错锁)，如果一个线程使用lock对已经加锁的互斥体对象再次加锁，则会返回EDEADLK。不影响其他线程调用后阻塞。
+- PTHREAD_MUTEX_RECURSIVE(可重入锁)。
+
+### 3.5.2 信号量
+
+```C++
+#include <semaphore.h>
+
+//pshared=0表示只能在同一个进程之间共享，非0表示可以在多个进程间共享
+//value用于设置信号量初始状态下的资源数量
+int sem_init(sem_t *sem, int pshared, unsigned int value);
+int sem_destory(sem_t *sem);
+
+//将信号量的资源计数加1，并解锁该信号量对象，会唤醒阻塞的其他线程
+int sem_post(sem_t *sem);
+int sem_wait(sem_t *sem);
+int sem_trywait(sem_t *sem);
+int sem_timedwait(sem_t *sem， const struct timespec* abs_timeout);
+```
