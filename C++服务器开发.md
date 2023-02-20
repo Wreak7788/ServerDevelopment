@@ -880,5 +880,324 @@ int pthread_rwlockattr_getkind_np(
                       int *restrict pref);
 ```
 
-## 3.6 windows线程同步对象
+## 3.6 [windows线程同步对象](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/)
+等待单个对象：
+```C++
+DWORD WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds);
+```
+hHandle可能的类型：
+- 线程：等待线程结束
+- 进程：等待进程结束
+- Event(事件):等待Event有信号
+- Mutex(互斥体):等待Mutex释放，成功后持有该Mutex
+- Semaphore(信号量):等待该Semaphore对象有信号
 
+返回值：
+- WAIT_FAILED
+- WAIT_OBJECT_0
+- WAIT_TIMEOUT
+- WAIT_ABANDONED:该mutex处于废弃状态
+
+等待多个对象：
+```C++
+DWORD WaitForMultipleObjects(
+  DWORD nCount,
+  const HANDLE *lpHandles,
+  BOOL bWaitAll,
+  DOWRD dwMilliseconds
+);
+```
+
+### 3.6.2 Windows临界区对象CriticalSection
+
+临界区的代码在某一时刻只允许一个线程执行。
+
+- InitializeCriticalSection
+- InitializeCriticalSectionAndSpinCount:多加了自旋
+- EnterCriticalSection
+- TryEnterCriticalSection
+- LeaveCriticalSection
+- DeleteCriticalSection
+
+位于EnterCriticalSection和LeaveCriticalSection之间的代码即临界区代码。TryEnterCriticalSection会尝试进入临界区，如果进入不了不会阻塞线程，而是立即返回False。
+
+```C++
+#include <Windows.h>
+#include <list>
+#include <iostream>
+#include <string>
+
+
+CRITICAL_SECTION g_cs;
+int              g_number = 0;
+
+DWORD __stdcall WOrkerThreadProc(LPVOID lpThreadParameter)
+{
+    DWORD dwThreadId = GetCurrentThreadId();
+    while (true)
+    {
+        EnterCriticalSection(&g_cs);
+        std::cout << "EnterCriticalSection, ThreadId:" << dwThreadId << std::endl;
+        g_number++;
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        char szMsg[64] = {0};
+        sprintf(szMsg,
+        "[%04d-%02d-%02d %02d:%02d:%02d:%03d]NO.%d, ThreadId:%d.",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+        g_number, dwThreadId);
+        std::cout << szMsg << std::endl;
+        std::cout << "Leave critical section, ThreadId:"
+        << dwThreadId << std::endl;
+        LeaveCriticalSection(&g_cs);
+        Sleep(1000);
+    }
+    
+}
+
+int main()
+{
+    InitializeCriticalSection(&g_cs);
+    HANDLE hWorkerThread1 = CreateThread(NULL, 0, WOrkerThreadProc, NULL, 0, NULL);
+    HANDLE hWorkerThread2 = CreateThread(NULL, 0, WOrkerThreadProc, NULL, 0, NULL);
+
+    WaitForSingleObject(hWorkerThread1, INFINITE);
+    WaitForSingleObject(hWorkerThread2, INFINITE);
+
+    CloseHandle(hWorkerThread1);
+    CloseHandle(hWorkerThread2);
+
+    DeleteCriticalSection(&g_cs);
+    return 0;
+}
+```
+
+封装CriticalSection:
+```C++
+class CCriticalSection
+{
+  public:
+  CCriticalSection(CRITICAL_SECTION& cs): m_CS(cs)
+  {
+    EnterCriticalSection(&m_CS);
+  }
+  ~CCriticalSection()
+  {
+    LeaveCriticalSection(&m_CS);
+  }
+
+private:
+  CRITICAL_SECTION& m_CS;
+}
+```
+
+### 3.6.3 WindowsEvent对象
+
+```C++
+HANDLE CreateEventA(
+  [in, optional] LPSECURITY_ATTRIBUTES lpEventAttributes,
+  [in]           BOOL                  bManualReset,
+  [in]           BOOL                  bInitialState,
+  [in, optional] LPCSTR                lpName
+);
+```
+- lpEventAttributes设置Event对象安全性，一般为NULL
+- bManualReset，设置Event对象受信行为，当设置为Ture时需要手动调用ResetEvent重置为无信号状态
+- bInitialState：Event初始状态是否受信
+- lpName,可以设置Event对象名称，也可以为NULl，Event对象可以通过名称在不同的进程之间共享。
+- 成功返回对象句柄，失败返回NULL
+
+```C++
+#include<Windows.h>
+#include<string>
+#include<iostream>
+
+bool        g_bTaskCompleted = false;
+std::string g_TaskResult;
+HANDLE      g_hTaskEvent = NULL;
+
+DWORD __stdcall WorkerThreadProc(LPVOID lpThreadParameter)
+{
+    Sleep(3000);
+    g_TaskResult = "Task completed";
+    g_bTaskCompleted = true;
+    SetEvent(g_hTaskEvent);
+    return 0;
+}
+
+int main()
+{
+    g_hTaskEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    HANDLE hWorkerThread = CreateThread(NULL, 0, WorkerThreadProc, NULL, 0, NULL);
+    DWORD dwResult = WaitForSingleObject(g_hTaskEvent, INFINITE);
+    if(dwResult == WAIT_OBJECT_0)
+        std::cout << g_TaskResult << std::endl;
+    CloseHandle(hWorkerThread);
+    CloseHandle(g_hTaskEvent);
+    return 0;
+}
+```
+
+> 手动重置的Event对象一旦变成受信状态，其信号就不会丢失。而条件变量则可能丢失信号。
+
+### 3.6.4 [Windows Mutex对象](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createmutexa)
+```C++
+HANDLE CreateMutexA(
+  [in, optional] LPSECURITY_ATTRIBUTES lpMutexAttributes,
+  [in]           BOOL                  bInitialOwner,
+  [in, optional] LPCSTR                lpName
+);
+```
+- lpMutexAttributes设置Mutex对象安全性，一般为NULL
+- bInitialOwner设置调用者的线程是否立即拥有该对象
+- lpName,可以设置Mutex对象名称，也可以为NULl，Mutex对象可以通过名称在不同的进程之间共享。
+
+```C++
+#include<Windows.h>
+#include<string>
+#include<iostream>
+
+int         g_iResource = 0;
+HANDLE      g_hMutex = NULL;
+
+DWORD __stdcall WorkerThreadProc(LPVOID lpThreadParameter)
+{
+    DWORD dwThreadId = GetCurrentThreadId();
+    while(true)
+    {
+        if(WaitForSingleObject(g_hMutex, 1000) == WAIT_OBJECT_0)
+        {
+            g_iResource++;
+            std::cout << "Thread:" << dwThreadId << "becomes mutex owner,ResourceNo:" 
+            << g_iResource << std::endl;
+            ReleaseMutex(g_hMutex);
+        }   
+        Sleep(1000);
+    }
+    return 0;
+}
+
+int main()
+{
+    g_hMutex = CreateMutex(NULL, false, NULL);
+    HANDLE hWorkerThreads[5];
+    for(int i = 0; i < 5; ++i)
+    {
+        hWorkerThreads[i] = CreateThread(NULL, 0, WorkerThreadProc, NULL, 0, NULL);
+    }
+    for(int i = 0; i < 5; ++i)
+    {
+        WaitForSingleObject(hWorkerThreads[i], INFINITE);
+        CloseHandle(hWorkerThreads[i]);
+    }
+    CloseHandle(g_hMutex);
+    return 0;
+}
+```
+
+### 3.6.5 [Windows Semaphore对象](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createsemaphoreexw)
+Semaphore能够精确控制同时唤醒指定数量的线程。
+```C++
+HANDLE CreateSemaphoreW(
+  [in, optional] LPSECURITY_ATTRIBUTES lpSemaphoreAttributes,
+  [in]           LONG                  lInitialCount,
+  [in]           LONG                  lMaximumCount,
+  [in, optional] LPCWSTR               lpName
+);
+```
+
+```C++
+#include<Windows.h>
+#include<iostream>
+#include<time.h>
+#include<list>
+#include<string>
+
+HANDLE                  g_hMsgSemaphore = NULL;
+std::list<std::string>  g_listChatMsg;
+CRITICAL_SECTION        g_csMsg;
+
+DWORD __stdcall NetThreadProc(LPVOID lpThreadParam)
+{
+    int nMsgIndex = 0;
+    while(true)
+    {
+        EnterCriticalSection(&g_csMsg);
+        int count = rand() % 4 + 1;
+        for(int i = 0; i < count; ++i)
+        {
+            nMsgIndex++;
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            char szMsg[64] = {0};
+            sprintf(szMsg,
+            "[%04d-%02d-%02d %02d:%02d:%02d:%03d] A new Msg, No.%d.",
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+            nMsgIndex);
+            g_listChatMsg.emplace_back(szMsg);
+        }
+        LeaveCriticalSection(&g_csMsg);
+        ReleaseSemaphore(g_hMsgSemaphore, count, NULL);
+    }
+    return 0;
+}
+
+DWORD __stdcall ParseThreadProc(LPVOID lpThreadParam)
+{
+    DWORD dwThreadId = GetCurrentThreadId();
+    std::string current;
+    while(true)
+    {
+        if(WaitForSingleObject(g_hMsgSemaphore, INFINITE) == WAIT_OBJECT_0)
+        {
+            EnterCriticalSection(&g_csMsg);
+            if(!g_listChatMsg.empty())
+            {
+                current = g_listChatMsg.front();
+                g_listChatMsg.pop_front();
+                std::cout << "Thread:" << dwThreadId << " Parse msg: " << 
+                current << std::endl;
+            }
+            LeaveCriticalSection(&g_csMsg);
+        }
+    }
+    return 0;
+}
+
+int main()
+{
+    srand(time(NULL));
+    InitializeCriticalSection(&g_csMsg);
+
+    g_hMsgSemaphore = CreateSemaphore(NULL, 0, INT_MAX, NULL);
+
+    HANDLE hNetThread = CreateThread(NULL, 0, NetThreadProc, NULL, 0, NULL);
+    HANDLE hWorkerThreads[4];
+    for(int i = 0; i < 4; ++i)
+    {
+        hWorkerThreads[i] = CreateThread(NULL, 0, ParseThreadProc, NULL, 0, NULL);
+    }
+    for(int i = 0;i < 4; ++i)
+    {
+        WaitForSingleObject(hWorkerThreads[i], INFINITE);
+        CloseHandle(hWorkerThreads[i]);
+    }
+    WaitForSingleObject(hNetThread, INFINITE);
+    CloseHandle(hNetThread);
+
+    CloseHandle(g_hMsgSemaphore);
+
+    DeleteCriticalSection(&g_csMsg);
+    return 0;
+}
+```
+
+### 3.6.6 [Windows读写锁](https://learn.microsoft.com/en-us/windows/win32/sync/slim-reader-writer--srw--locks)
+
+- InitializeSRWLock:Initialize an SRW lock.
+- AcquireSRWLockShared:以共享方式获得读写锁
+- ReleaseSRWLockShared:释放共享读写锁
+- AcquireSRWLockExclusive：获得排他读写锁
+- ReleaseSRWLockExclusive：释放排他读写锁
+
+不需要显示销毁一个读写锁。
