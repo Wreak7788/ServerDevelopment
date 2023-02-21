@@ -1269,5 +1269,222 @@ C++11标准中新增了用于线程同步的std::mutex和std::condition_variable
 - shared_lock:C++14，共享互斥量管理
 - scoped_lock:C++17,多互斥量避免死锁管理
 
-**要避免同一个线程对一个互斥量多次加锁，如果确实需要，则应该使用recursive_mutex，并且加锁多少次就需要解锁多少次。**
+**要避免同一个线程对一个互斥量多次加锁，如果确实需要，则应该使用recursive_mutex，并且加锁多少次就需要解锁多少次。** std::mutex和std::shared_mutex分别对应Java中的ReentrantLock和ReentrantReadWriteLock。
 
+C++11还提供了std::condition_variable来表示条件变量，使用时需要绑定一个std::unique_lock或std::lock_guard对象，并且不需要显示的初始化和销毁。
+
+```C++
+#include<thread>
+#include<mutex>
+#include<condition_variable>
+#include<list>
+#include<iostream>
+
+class Task
+{
+public:
+    Task(int taskId)
+    {
+        this->taskId = taskId;
+    };
+    void doTask()
+    {
+        std::cout << "handle a task, taskId: " << taskId << ", ThreadId:"
+        << std::this_thread::get_id() << std::endl;
+    }
+
+private:
+    int taskId;
+};
+
+std::mutex      mymutex;
+std::list<Task*> tasks;
+
+std::condition_variable myCv;
+
+void* consumer_thread()
+{
+    Task* pTask = NULL;
+    while(true)
+    {
+        //减小guard锁范围
+        {
+            std::unique_lock<std::mutex> gurad(mymutex);
+            while(tasks.empty())
+            {
+                myCv.wait(gurad);
+            }
+            pTask = tasks.front();
+            tasks.pop_front();
+        }
+        if(pTask == NULL)
+            continue;
+        pTask->doTask();
+        delete pTask;
+        pTask = NULL;
+    }
+}
+
+void* producer_thread()
+{
+    int taskId = 0;
+    Task* pTask = NULL;
+    while(true)
+    {
+        pTask = new Task(taskId);
+        {
+            std::lock_guard<std::mutex> guard(mymutex);
+            tasks.push_back(pTask);
+            std::cout << "produce a task, taskId:" << taskId << ", threadId:"
+            <<std::this_thread::get_id() << std::endl;
+        }
+        myCv.notify_one();
+        taskId++;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    return NULL;
+}
+
+int main()
+{
+    std::thread consumer1(consumer_thread);
+    std::thread consumer2(consumer_thread);
+    std::thread consumer3(consumer_thread);
+    std::thread consumer4(consumer_thread);
+    std::thread consumer5(consumer_thread);
+
+    std::thread producer(producer_thread);
+    producer.join();
+    consumer1.join();
+    consumer2.join();
+    consumer3.join();
+    consumer4.join();
+    consumer5.join();
+
+    return 0;
+}
+```
+
+## 3.9 多线程使用锁总结
+
+### 减少锁的使用次数
+
+使用锁会造成以下影响：
+
+- 加解锁本身有开销
+- 临界区代码不能并发执行
+- 线程竞争激烈的话会造成上下切换开销的消耗
+
+### 明确锁范围
+
+### 减少锁的使用粒度
+
+尽量减少锁作用的临界区代码范围。
+
+### 避免死锁
+
+- 加锁后需要在函数的每个出口都有解锁操作；
+- 线程退出时要及时释放其持有的锁
+- 多线程请求锁的方向要一致，如有锁A、B需要加锁，所有线程的加锁顺序要么都是先A后B，要么都是先B后A
+
+### 避免活锁
+
+- 避免让过多的线程使用trylock请求锁，以免出现活锁浪费资源
+
+## 3.10 线程局部存储(Thread Local Storage, TLS)
+
+### 3.10.1 [Windows 线程局部存储]((https://learn.microsoft.com/en-us/windows/win32/procthread/thread-local-storage))
+
+windows将线程局部存储区分为TLS_MINIMUM_AVAILABLE个块，默认为64，其定义在winnt.h中。
+
+> Thread local storage (TLS) enables multiple threads of the same process to use an index allocated by the **TlsAlloc** function to store and retrieve a value that is local to the thread. In this example, an index is allocated when the process starts. When each thread starts, it allocates a block of dynamic memory and stores a pointer to this memory in the TLS slot using the **TlsSetValue** function. The CommonFunc function uses the **TlsGetValue** function to access the data associated with the index that is local to the calling thread. Before each thread terminates, it releases its dynamic memory. Before the process terminates, it calls **TlsFree** to release the index.
+
+### 3.10.2 Linux的线程局部存储
+
+```C++
+__thread int g_mydata = 99;   //gcc编译器提供的用于定义线程局部变量的方式
+//因为进程中的所有线程都可以使用key，所以key应该指向一个全局变量
+int pthread_key_create(pthread_key_t *key, void (*destructor)(void*));
+int pthread_key_delete(pthread_key_t key);
+void *pthread_getspecific(pthread_key_t key);
+int pthread_setspecific(pthread_key_t key, const void *value);
+void* destructor(void* value)
+{
+  //多是为了释放value指针指向的资源
+}
+```
+
+### 3.10.3 C++11的thread_local关键字
+
+使用thread_local来定义一个线程变量。
+
+### 总结
+  
+- 对于线程变量，每个线程都有一个这个变量的拷贝，互不影响，在线程未结束前一直存在
+- 系统的线程局部存储区并不大，尽量不要使用这个空间存储大数据块，如不得不使用，可以将大数据块存储在堆内存中，再将堆内存的地址指针存储在TLS中。
+
+## 3.11 C库的非线程安全函数
+
+这种函数大多采用了全局变量或者静态变量
+
+## 3.12 线程池与队列系统设计
+
+## 3.13 纤程(Fiber)和协程(Routine)
+
+### 3.13.1 [纤程(Fiber)](https://learn.microsoft.com/en-us/windows/win32/procthread/fibers)
+
+纤程是Windows中的概念，使用线程有如下不足：
+
+- 由于线程的调度是由操作系统内核控制的，所以我们无法确定操作系统会何时运行或挂起该线程
+- 对于一些轻量级的任务，创建一个线程做的消耗太大
+
+在Windows中，一个线程可以有多个纤程，用户可以根据需要在各个纤程之间自由切换。**ConverThreadToFiber**可以将纤程切换成纤程模式，但在默认情况下x86系统的CPU浮点状态信息不属于CPU寄存器，不会为每个纤程都维护一份，因此如果在纤程中执行浮点操作就会导致数据被破坏，为了禁用这种行为可以使用**ConverThreadToFiberEx(, FIBER_FLAG_FLOAT_SWITCH)**。纤程也有自己的局部存储(FLS)。
+
+```C++
+#include<windows.h>
+#include<string>
+
+char g_szTime[64] = { "time not set..."};
+LPVOID mainWorkerFiber = NULL;
+LPVOID pWorkerFiber = NULL;
+
+void WINAPI workerFiberProc(LPVOID lpFiberParameter)
+{
+    while(true)
+    {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        wsprintfA(g_szTime, "%04d-%02d-%02d %02d:%02d:%02d", st.wYear, st.wMonth,
+        st.wDay, st.wHour, st.wMinute, st.wSecond);
+        printf("%s\n", g_szTime);
+
+        SwitchToFiber(mainWorkerFiber);
+    }
+}
+
+int main()
+{
+    mainWorkerFiber = ConvertThreadToFiber(NULL);
+    int index = 0;
+    while(index < 100)
+    {
+        ++index;
+        pWorkerFiber = CreateFiber(0, workerFiberProc, NULL);
+        if(pWorkerFiber == NULL)
+            return -1;
+        SwitchToFiber(pWorkerFiber);
+
+        memset(g_szTime, 0, sizeof(g_szTime));
+        strncpy(g_szTime, "time not set...", strlen("time not set..."));
+        printf("%s\n", g_szTime);
+        Sleep(1000);
+    }
+    DeleteFiber(pWorkerFiber);
+    ConvertFiberToThread();
+    return 0;
+}
+```
+
+### 3.13.2 协程
+
+线程是操作系统内核对象，线程过多时会导致上下文切换消耗太大，协程可以被认为是应用层模拟的线程，避免了线程上下文切换的部分额外损耗，同时具有并发运行的优点，降低了编写并发程序的复杂度。
