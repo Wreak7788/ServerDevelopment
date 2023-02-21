@@ -1201,3 +1201,73 @@ int main()
 - ReleaseSRWLockExclusive：释放排他读写锁
 
 不需要显示销毁一个读写锁。
+
+### 3.6.7 [Windows条件变量](https://learn.microsoft.com/en-us/windows/win32/sync/condition-variables)
+
+在XP版本以后支持，user-mode对象，不支持跨进程共享。使用时需要配合一个临界区或读写锁，在调用SleepCondition相关函数前，调用线程必须持有对应临界区或读写锁对象。
+
+- InitializeConditionVariable：Initializes a condition variable.
+- SleepConditionVariableCS：Sleeps on the specified condition variable and releases the specified critical section as an atomic operation.
+- SleepConditionVariableSRW：Sleeps on the specified condition variable and releases the specified SRW lock as an atomic operation.
+- WakeAllConditionVariable：Wakes all threads waiting on the specified condition variable.
+- WakeConditionVariable：Wakes a single thread waiting on the specified condition variable.
+
+```C++
+CRITICAL_SECTION CritSection;
+CONDITION_VARIABLE ConditionVar;
+
+void PerformOperationOnSharedData()
+{ 
+   EnterCriticalSection(&CritSection);
+
+   // Wait until the predicate is TRUE
+
+   while( TestPredicate() == FALSE )
+   {
+      //线程无限等待，直到资源可用，由于可能存在操作系统虚假唤醒，所有在其外
+      //加了一个用于判断资源是否可用的循环
+      SleepConditionVariableCS(&ConditionVar, &CritSection, INFINITE);
+   }
+
+   // The data can be changed safely because we own the critical 
+   // section and the predicate is TRUE
+
+   ChangeSharedData();
+
+   LeaveCriticalSection(&CritSection);
+
+   // If necessary, signal the condition variable by calling
+   // WakeConditionVariable or WakeAllConditionVariable so other
+   // threads can wake
+}
+```
+
+### 3.6.8 在多进程间共享线程同步对象
+
+> Windows Event, Mutex, Semaphore对象在创建时指定名称后就可以在不同的进程之间共享。以下用CreateMutex来说明：
+> 
+> If the function succeeds, the return value is a handle to the newly created mutex object.
+> If the function fails, the return value is NULL. To get extended error information, call GetLastError.
+> 
+> **If the mutex is a named mutex and the object existed before this function call, the return value is a handle to the existing object, and the GetLastError function returns ERROR_ALREADY_EXISTS.**
+
+## 3.7 C++11/14/17线程同步对象
+
+C++11标准中新增了用于线程同步的std::mutex和std::condition_variable。
+
+- mutex:C++11,基本的互斥量
+- timed_mutex:C++11,超时机制互斥量
+- recursive_mutex:C++11，可重入的互斥量
+- recursive_timed_mutex:C++11
+- shared_timed_mutex:C++14
+- shared_mutex:C++17
+
+并且提供了如下封装：
+
+- lock_gurad:C++11，基于作用域的互斥量管理
+- unique_lock:C++11,更加灵活的互斥量管理
+- shared_lock:C++14，共享互斥量管理
+- scoped_lock:C++17,多互斥量避免死锁管理
+
+**要避免同一个线程对一个互斥量多次加锁，如果确实需要，则应该使用recursive_mutex，并且加锁多少次就需要解锁多少次。**
+
