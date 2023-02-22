@@ -1488,3 +1488,397 @@ int main()
 ### 3.13.2 协程
 
 线程是操作系统内核对象，线程过多时会导致上下文切换消耗太大，协程可以被认为是应用层模拟的线程，避免了线程上下文切换的部分额外损耗，同时具有并发运行的优点，降低了编写并发程序的复杂度。
+
+# 第四章 网络编程
+
+## 4.1 socket函数
+
+|函数|说明|
+|---|---|
+|socket|创建套接字|
+|bind|将socket绑定到IP和端口|
+|listen|让socket监听|
+|connect|建立TCP链接，一般用于客户端|
+|accept|尝试接收一个链接，用于服务端|
+|send|发送数据|
+|recv|接收数据|
+|select|判断一组socket上的读写和异常事件|
+|gethostbyname|通过域名获取机器地址|
+|close|关闭套接字|
+|shutdown|关闭socket收发通道|
+|setsocket|设置套接字选项|
+|getsocket|获取套接字选项|
+
+## 4.3 涉及跨平台网络通信库的socket函数用法
+
+### 4.3.1 socket数据类型
+
+```C++
+#ifdef WIN32
+typedef SOCKET SOCKET_TYPE
+#else
+typedef int SOCKET_TYPE
+#endif
+```
+
+### 4.3.2 windows上调用socket函数
+
+对于windows平台，想要使用socket函数，必须先调用WSAStartup函数将与socket函数相关的dll文件加载到进程地址空间，退出时使用WSACleanup函数卸载相关dll文件。WSAStartup和WSACleanup是进程相关的任何一个线程都可以调用，因此，一般在进程退出时才调用WSACleanup函数。
+
+```C++
+bool InitSocket()
+{
+  WORD wVersionRequested = MAKEWORD(2,2);
+  WSADATA wsaData;
+  int nErrorId = ::WSAStartup(wVersionRequested, &wsaData);
+  if(nErrorId != 0)
+    return false;
+  if(LOBYTE(wsaData.wVersion)!=2 || HIBYTE(wsaData.wVersion)!=2)
+  {
+    UninitSocket();
+    return false;
+  }
+  return true;
+}
+
+void UninitSocket()
+{
+  ::WSACleanup();
+}
+```
+
+### 关闭socket函数
+
+Linux中使用close，windows中使用closesocket函数，windows中也定了一个close函数，但不能用于关闭套接字，否则会导致程序崩溃。
+
+```C++
+#ifdef WIN32
+#define closesocket(s) close(s)
+#endif
+```
+
+### 获取socket函数的错误码
+
+在某个socket函数调用失败时，Windows需要调用WSAGetLastError()获取错误代码，Linux直接使用errno获取。
+
+```C++
+#ifdef WIN32
+#define GetSocketError() WSAGetLastError()
+#else
+#define GetSocketError() errno
+#endif
+```
+
+### 套接字函数返回值
+
+大多数socket函数在调用失败后会返回-1，windows为此定义了一个宏SOCKET_ERROR，为此在Linux上也可以定义一个：
+
+```C++
+#ifndef WIN32
+#define SOCKET_ERROR (-1)
+#endif
+```
+
+### 错误码WSAEWOULDBLOCK和EWOULDBLOCK
+
+```C++
+#ifdef WIN32
+#define EWOULDBLOCK WSAEWOULDBLOCK
+#endif
+```
+
+对于IO复用技术，两者都支持select模型，Linux特有的poll、epoll模型；windows特有的WSAPOOL和完成端口模型（IOCP）。
+
+## 4.4 bind函数
+
+### 4.4.1 bind函数如何选择绑定地址
+
+使用INADDR_ANY，底层的协议栈会自动选择一个合适的IP地址，在多网卡机器上选择IP地址会变得简单。相当于地址0.0.0.0。
+
+### 4.4.2 bind函数端口号问题
+
+端口号指定0系统会随机分配可用端口号，客户端的socket也可以调用bind函数绑定端口号。
+
+## 4.5 select函数
+
+### 4.5.1 Linux上的select函数
+
+select函数用于检测在一组socket中是否有事件就绪，返回值为0时代表超时，返回-1代表出错，若监视的事件中有任意一个事件发生，则返回值为就绪文件描述符数量，也就是说，即使只有一个文件描述符就绪，返回值也是 1，一般分如下三类：
+
+- 读事件就绪
+- 写事件就绪
+- 异常事件就绪
+
+```C++
+/* According to POSIX.1-2001, POSIX.1-2008 */
+#include <sys/select.h>
+
+/* According to earlier standards */
+#include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+int select(int nfds, fd_set *readfds, fd_set *writefds,
+          fd_set *exceptfds, struct timeval *timeout);
+
+void FD_CLR(int fd, fd_set *set);
+int  FD_ISSET(int fd, fd_set *set);
+void FD_SET(int fd, fd_set *set);
+void FD_ZERO(fd_set *set);
+
+#include <sys/select.h>
+
+int pselect(int nfds, fd_set *readfds, fd_set *writefds,
+            fd_set *exceptfds, const struct timespec *timeout,
+            const sigset_t *sigmask);
+```
+
+- nfds：所有需要使用select函数检测事件的fd中最大值加1
+- readfds:需要监听可读事件的fd集合
+
+> 在Linux上，向fd_set添加fd时用的是位图法，一个可以添加1024个fd。
+
+select用法示例：
+
+```C++
+//
+// Created by ljx on 23-2-22.
+//
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <iostream>
+#include <sys/time.h>
+#include <vector>
+#include <errno.h>
+#include <string.h>
+
+#define INVALID_FD -1
+
+int main()
+{
+    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if(listen_fd == INVALID_FD)
+    {
+        std::cout << "create listen_fd error." << std::endl;
+        return -1;
+    }
+
+    struct sockaddr_in bindAddr;
+    bindAddr.sin_family = AF_INET;
+    bindAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    bindAddr.sin_port = htons(3000);
+    if(bind(listen_fd, (struct sockaddr*)&bindAddr, sizeof(bindAddr)) == -1)
+    {
+        std::cout << "bind listen socket error." << std::endl;
+        close(listen_fd);
+        return -1;
+    }
+
+    if(listen(listen_fd, SOMAXCONN) == -1)
+    {
+        std::cout << "listen error." << std::endl;
+        close(listen_fd);
+        return -1;
+    }
+
+    std::vector<int> client_fds;
+    int maxfd;
+
+    while(true)
+    {
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(listen_fd, &readSet);
+        maxfd = listen_fd;
+
+        int clientFdsLength = client_fds.size();
+        for(int i = 0; i < clientFdsLength; ++i)
+        {
+            if(client_fds[i] != INVALID_FD)
+            {
+                FD_SET(client_fds[i], &readSet);
+                if(maxfd < client_fds[i])
+                    maxfd = client_fds[i];
+            }
+        }
+
+        timeval tm;
+        tm.tv_sec = 1;
+        tm.tv_usec = 0;
+        int ret = select(maxfd+1, &readSet, NULL, NULL, &tm);
+        if(ret == -1)
+        {
+            if(errno != EINTR)
+                break;
+        }
+        else if(ret == 0)
+        {
+            //select 函数超时
+            continue;
+        }
+        else
+        {
+            if(FD_ISSET(listen_fd, &readSet))
+            {
+                //如果是监听socket的可读事件，说明有新连接
+                struct sockaddr_in clientAddr;
+                socklen_t  clientAddrLen = sizeof(clientAddr);
+                int clientFd = accept(listen_fd, (struct  sockaddr*)&clientAddr, &clientAddrLen);
+                if(clientFd == INVALID_FD)
+                {
+                    break;
+                }
+                std::cout << "accept a client connection, fd:" << clientFd << std::endl;
+                client_fds.push_back(clientFd);
+            }
+            else
+            {
+                char recvBuf[64];
+                int clientFdsLength = client_fds.size();
+                for(int i = 0;i < clientFdsLength; ++i)
+                {
+                    if(client_fds[i] != INVALID_FD && FD_ISSET(client_fds[i], &readSet))
+                    {
+                        //如果其他socket的读事件则是客户端发来的消息
+                        memset(recvBuf, 0, sizeof(recvBuf));
+                        int length = recv(client_fds[i], recvBuf, 64, 0);
+                        //recv函数返回0说明对端关闭了连接
+                        if(length <= 0)
+                        {
+                            std::cout << "recv data error, clientfd:" << client_fds[i] << std::endl;
+                            close(client_fds[i]);
+                            client_fds[i] = INVALID_FD;
+                            continue;
+                        }
+                        std::cout << "clientfd: " << client_fds[i] << ", recv data:" << recvBuf << std::endl;
+                    }
+                }
+            }
+        }
+    }
+    int clientFdsLength = client_fds.size();
+    for(int i = 0; i < clientFdsLength; ++i)
+    {
+        if(client_fds[i] == INVALID_FD)
+        {
+            close(client_fds[i]);
+        }
+    }
+    close(listen_fd);
+    return 0;
+}
+```
+
+注意事项：
+
+- select函数在调用前后可能会修改readfds,writefds,exceptfds三个集合的内容，所以想要复用这三个变量时需要小心；
+- select函数也会修改timeval结构体的值，在Linux系统上是这样，Windows不会；
+- select函数的timeval结构体的两个字段如果都为0， 其行为时select检测相关集合中的fd，如果没有需要的事件则立即返回。如果这个值设置为NULL，select函数则会一直阻塞，知道满足要求的事件触发；
+- 在Linux上，select函数的第一个参数必须是待检测事件中最大的fd加1，在Windows上第一个参数传入任意值都可以，本身并不使用这个值
+
+缺点：
+
+- 每次调用select函数，都需要把fd集合从用户态复制到内核态并且在内核态中遍历传递进来的fd集合，这个开销在fd较多时很大；
+- 单个进程能够监视的文件描述符数量存在最大限制，Linux上一般为1024；
+- select函数在每次调用之前都要对传入的参数进行重新设定；
+- 在Linux上，select函数实现原理是其底层使用了poll函数
+
+## 4.6 socket的阻塞模式和非阻塞模式
+
+在阻塞和非阻塞模式下，具有不同行为表现的socket函数一般有connect,accept,send和recv。在Linux上还有write和read。默认创建的socket是阻塞模式的。
+
+### 设置非阻塞模式
+
+1. 创建时指定非阻塞（Linux)
+
+```C++
+int s = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
+```
+
+2. 使用ioctl或者fcntl
+
+```C++
+int oldSocketFlag = fcntl(sockfd, F_GETFL, 0);
+int newSocketFlag = oldSocketFlag | O_NONBLOCK;
+fcntl(sockfd, F_SETFL, newSocketFlag);
+```
+
+3. Linux上的accept4可以将返回的socket设置为非阻塞的
+
+```C++
+int clientFd = accept4(listenFd, &clientAddr, &clientAddrLen, SOCK_NONBLOCK);
+```
+
+4. 在windows上通过ioctlsocket函数将socket设置为非阻塞的
+
+```C++
+int ioctlsocket(SOCKET s, long cmd, u_long *argp);
+//cmd为FIONBIO， argp为0时阻塞，argp非0则为非阻塞
+```
+
+### 4.6.2 send和recv在阻塞和非阻塞模式下的表现
+
+send函数本质上不是像网络上发送数据，而是将应用层发送缓冲区的数据拷贝到内核缓冲区（TCP窗口），至于什么时候会从网卡缓冲区发送到网络要看TCP/IP协议栈的行为来确定，如果socket设置了TCP_NODELAY(禁用nagel算法)，存放到内核缓冲区的数据就会被立即发送。recv的行为类似。
+
+如果内核缓冲区被填满后会有以下表现；
+
+- 如果socket是阻塞模式，继续调用send/recv，程序会阻塞在send/recv处；
+- 如果是非阻塞模式，send/recv会立即出错并返回，会得到一个相关错误码，Linux上为EWOULDBLOCK或EAGAIN，Windows上为WSAEWOULDBLOCK。
+
+### 4.6.3 send/recv小结
+
+非阻塞模式下返回值总结
+
+|返回值n|含义|
+|---|---|
+|>0|成功发送/接受n字节，并不代表数据全部发送，有可能只发送了部分|
+|=0|对端关闭连接，或者主动发送了0字节的数据|
+|-1|出错/信号中断/缓冲区满/空|
+
+返回-1时的情况
+
+|错误码|send函数|recv函数|操作系统|
+|---|---|---|---|
+|EWOULDBLOCK/EAGAIN|TCP窗口太小，数据暂时无法发送|当前内核缓冲区无可读数据|Linux|
+|EINTR|信号中断|信号中断|Linux|
+|非以上|出错|出错|Linux|
+|WSAEWOULDBLOCK|TCP窗口太小，数据暂时无法发送|当前内核缓冲区无可读数据|Windows|
+|不是WSAEWOULDBLOCK|出错|出错|Windows|
+
+**使用场景**
+
+非阻塞模式一般用于需要支持高并发多QPS的场景（如服务器程序），阻塞模式逻辑简单，程序明了。阻塞模式可用于下面的场景：
+
+简单的网络应用：对于简单的网络应用，如传输小型文件或消息，阻塞模式的 socket 可以满足需求，因为这些操作不需要长时间的等待和处理，而且相对于非阻塞模式的 socket，阻塞模式更加易于使用和实现。
+
+小规模网络应用：对于小规模的网络应用，阻塞模式的 socket 可以提供足够的性能和可靠性。此外，阻塞模式也更容易实现和调试。
+
+低负载网络：对于低负载的网络，阻塞模式的 socket 可以提供良好的性能和可靠性。例如，对于个人电脑或小型服务器，阻塞模式的 socket 可以满足需求，因为它们通常不需要处理大量的并发连接或高速数据传输。
+
+传输较小数据量：对于传输较小数据量的网络应用，阻塞模式的 socket 可以比非阻塞模式的 socket 更加高效。这是因为在阻塞模式下，数据可以一次性传输完毕，而非阻塞模式下需要多次传输，增加了额外的开销。
+
+总之，阻塞模式的 socket 适用于简单、小规模、低负载、传输较小数据量的网络应用，它更加易于使用和实现，但是在高并发、高速传输和大数据量传输等场景下，可能会影响网络应用的性能和可靠性。
+
+### 主动发送0字节数据的情况
+
+send函数发送0字节的数据时，操作系统协议栈并不会把这些数据发送出去，因此server端的recv函数不会接收到这个0字节的数据包。开发时应该避免写出可能调用send函数发送0字节的代码。
+
+## 4.8 connect函数在阻塞和非阻塞模式下的行为
+
+一般步骤：
+
+- 创建socket，设置非阻塞模式
+- 调用connect函数，此时，无论是否连接成功都会立即返回，如果返回-1，并且错误码是EINPROGRASS则表示正在尝试连接
+- 调用select函数，在指定时间内判断该socket是否可写，如果可写则说明连接成功，否则认为连接失败
+
+**在Linux上，一个socket没有建立连接之前用select函数检测也会得到可写的结果。因此需要调用getsocketopt检测socket是否出错，并通过错误码检测socket是否连接上。Windows上不会出现此问题**
+
+## 4.9 连接时顺便接受第一组数据
+
+Linux提供了TCP_DEFER_ACCEPT的socket选项，设置该选项之后只有连接成功且接收到第一组对端数据时accept才返回。Windows则可以通过[AcceptEx](https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-acceptex)函数来设置。
+
+发送时同样可以设置是否顺便发送第一组数据。Windows通过ConnectEx函数设置，
+
