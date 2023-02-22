@@ -1882,3 +1882,109 @@ Linux提供了TCP_DEFER_ACCEPT的socket选项，设置该选项之后只有连�
 
 发送时同样可以设置是否顺便发送第一组数据。Windows通过ConnectEx函数设置，
 
+## 4.10 获取当前socket对应的接受缓存区中的可读数据量
+
+### 函数
+
+Windows提供了[ioctlsocket](https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-ioctlsocket)这个函数，cmd设置为FIONREAD即可，argp存储操作结果。Linux可以使用ioctl函数，用法基本相同。但是Linux的第三个参数必须初始化为0才能得到正确的结果。
+
+## 4.12 Linux SIGPIPE信号
+
+当A关闭连接时，若B继续向A发送数据，根据TCP的规定，B会收到一个RST报文应答，若B继续向这个服务发送数据，系统就会产生一个SIGPIPE信号给B进程，**并且系统对SIGPIPE信号的默认处理方式是结束进程。** 为了避免这个信号对程序产生影响，可以忽略该信号；
+
+```C++
+signal(SIGPIPE, SIG_IGN)
+```
+
+这样设置后，第二次调用write/send方法时会返回-1，同时errno错误码被置为EPIPE。
+
+## 4.13 Linux poll函数
+
+poll函数用于检测一组文件描述符上的可读可写和出错事件：
+
+```C++
+#include <poll.h>
+int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+
+struct pollfd {
+    int   fd;         /* file descriptor */
+    short events;     /* requested events */
+    short revents;    /* returned events */
+};
+```
+
+优点：
+
+- poll不要求计算最大fd+1
+- 与select相比，poll在处理大数量文件描述符时速度更快
+- poll没有最大连接数的限制
+- 调用poll时，只需对参数进行一次设置
+
+缺点：
+
+- 在调用epoll时，不管有没有意义，大量fd的数组在用户态和内核地址空间之间被整体复制
+- 与select一样，poll返回后需要遍历集合fd来获取就绪的fd
+- 同时连接的大量客户端在某一时刻可能只有很少的就绪态，因此随着监视描述符数量增长，其效率也会线性下降
+
+## 4.14 epoll模型
+
+epoll 是一种高效的 I/O 多路复用机制，它比传统的 select 和 poll 函数更加灵活和高效。epoll 主要包括三个函数：
+
+int epoll_create(int size)：用于创建一个 epoll 对象，size 参数指定 epoll 可以监视的文件描述符的最大数量，但实际上这个值并不是一个硬性限制。
+
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)：用于向 epoll 中添加或修改或删除一个文件描述符，epfd 参数是 epoll 对象的文件描述符，op 参数是操作类型，可以是 EPOLL_CTL_ADD、EPOLL_CTL_MOD 或 EPOLL_CTL_DEL，分别用于添加、修改和删除文件描述符，fd 参数是需要添加、修改或删除的文件描述符，event 参数是一个指向 epoll_event 结构体的指针，用于指定事件类型和其他参数。
+
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)：用于等待 epoll 监视的文件描述符上发生事件，epfd 参数是 epoll 对象的文件描述符，events 参数是一个指向 epoll_event 数组的指针，用于存储发生事件的文件描述符和事件类型，maxevents 参数指定 events 数组的最大大小，timeout 参数指定等待时间的毫秒数，如果 timeout 参数为 -1，则表示等待时间无限长。
+
+```C++
+#include <sys/epoll.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#define MAX_EVENTS 10
+
+int main() {
+    int epfd, nfds;
+    struct epoll_event event, events[MAX_EVENTS];
+
+    // 创建 epoll 对象
+    epfd = epoll_create(1);
+    if (epfd == -1) {
+        perror("epoll_create");
+        exit(EXIT_FAILURE);
+    }
+
+    // 监视 stdin 文件描述符上是否有数据可读
+    event.data.fd = STDIN_FILENO;
+    event.events = EPOLLIN;
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, STDIN_FILENO, &event) == -1) {
+        perror("epoll_ctl");
+        exit(EXIT_FAILURE);
+    }
+
+    while (1) {
+        // 等待事件
+        nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+        if (nfds == -1) {
+            perror("epoll_wait");
+            exit(EXIT_FAILURE);
+        }
+
+        // 处理事件
+        for (int i = 0; i < nfds; i++) {
+            if (events[i].data.fd == STDIN_FILENO) {
+                printf("stdin is readable\n");
+            }
+        }
+    }
+
+    return 0;
+}
+```
+
+优点：
+
+- epoll_wait调用完成后，可通过参数event拿到所有的有事件就绪的fd
+- 在socket连接数量较大而活跃的连接较少时，epoll模型更高效
+
