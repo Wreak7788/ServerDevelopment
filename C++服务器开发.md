@@ -1988,3 +1988,74 @@ int main() {
 - epoll_wait调用完成后，可通过参数event拿到所有的有事件就绪的fd
 - 在socket连接数量较大而活跃的连接较少时，epoll模型更高效
 
+### 4.14.3 LT模式和ET模式
+
+epoll模式新增了一个事件宏EPOLLET，即边缘触发模式，默认的模式为水平触发模式（LT）。
+
+- 对于水平触发模式，一个事件只要有，就会一直触发
+- 对于边缘触发模式，一个事件从无到有才触发
+
+注意事项：
+
+- 对于一个非阻塞socket，如果使用epoll边缘模式检测事件是否可读，则触发可读事件后，一定要一次性把socket上的数据收取干净，方法一般为循环调用recv，直到出错，错误码为EWOULDBLOCK。
+- 在LT模式下，不需要写事件时一定要及时移除，避免不必要的触发且浪费CPU资源；在ET模式下，写事件触发后，如果还需要下一次的写事件触发来驱动任务，则需要继续注册一次检测可写事件
+- 使用LT可以由我们决定每次收取多少字节或者合适连接，但是可能会导致多次触发；使用ET模式，我们每次必须将数据收完或立即调用accept接受连接，但其优点时触发次数少。
+
+### 4.14.4 EPOLLONESHOT
+
+epoll模型还有一个EPOLLONESHOT选项，如果某个socket注册了该标志，则其注册监听的事件在触发一次后再也不会触发，除非重新监听该事件类型。
+
+## 4.15 高效的readv和writev函数
+
+在实际开发中，高性能服务有一个原则：尽量减少系统调用。有时需要将一个文件描述符对应的数据读到多个缓冲区，或者将多个缓冲区的数据同时写入一个文件描述符对应的文件或者套接字中，为此Linux提供了一系列readv和writev函数。
+
+## 4.16 主机字节序和网络字节序
+
+主机字节序分为大端存储和小端存储：
+
+1) little-endian(LE,小端)。对于一个整数值，整数高位被存储在内存高地址位置，低位存在内存低地址位置。Intel x86系列使用的都是小端存储。
+2) big-endian(BE,大端)。对于一个整数值，整数高位被存储在内存低地址位置，低位存在内存高地址位置。Java程序、Mac机器上一般都为大端编码。
+
+网络字节序采用big-endian排序方式。
+
+## 4.17 域名解析API
+
+使用gethostbyname函数将域名转换为IP地址。
+
+- gethostbyname是不可重入函数，在Linux上建议使用gethostbyname_r替代
+- gethostbyname在解析域名时会阻塞当前线程
+- 在使用gethostbyname出错时，不能使用errno和perror，应该使用h_errno和herror。
+- 在新的Linux上，gethostbyname和gethostbyaddr一样被标记为废弃，应该使用新的函数getaddrinfo替代。
+
+```C++
+#include "sys/socket.h"
+#include "sys/types.h"
+#include "netinet/in.h"
+#include "arpa/inet.h"
+#include "netdb.h"
+#include "iostream"
+
+bool connectToServer(const char* server, short port)
+{
+    int socketFd = socket(AF_INET, SOCK_STREAM, 0);
+    if(socketFd == -1)
+        return false;
+    struct sockaddr_in addr = {0};
+    struct hostent* pHostEnt = NULL;
+
+    if(addr.sin_addr.s_addr = inet_addr(server) == INADDR_NONE)
+    {
+        pHostEnt = gethostbyname(server);
+        if(pHostEnt == NULL)
+            return false;
+        addr.sin_addr.s_addr = *((unsigned long*)pHostEnt->h_addr_list[0]);
+    }
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    int ret = connect(socketFd, (struct sockaddr*)&addr, sizeof addr);
+    if(ret == -1)
+        return false;
+    return true;
+}
+```
+
