@@ -545,3 +545,157 @@ int epoll_pwait(int epfd, struct epoll_event *events,
 ### NOTES
 
 当一个线程在调用epoll_pwait()时被阻塞，另一个线程有可能会向等待的epoll实例中添加一个文件描述符。如果新的文件描述符变为可用状态，它将导致epoll_wait()调用解除阻塞。
+
+# [socket设置](https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-setsockopt)
+
+```C++
+#include <sys/types.h>          /* See NOTES */
+#include <sys/socket.h>
+
+int getsockopt(int sockfd, int level, int optname,
+                void *optval, socklen_t *optlen);
+int setsockopt(int sockfd, int level, int optname,
+                const void *optval, socklen_t optlen);
+```
+
+getsockopt和setsockopt是两个函数，它们用于操作文件描述符sockfd所指向的套接字的选项。选项可能存在于多个协议层级，但它们总是存在于最上层的套接字层级。
+
+当操作套接字选项时，必须指定选项所在的层级和选项的名称。要操作套接字API层级的选项，level参数应该设置为SOL_SOCKET。要操作其他层级的选项，level参数应该设置为控制该选项的协议的协议号。例如，要表示一个选项由TCP协议解释，level应该设置为TCP的协议号；参见getprotoent(3)。
+
+optval和optlen参数用于访问setsockopt()的选项值。对于getsockopt()，它们指定了一个缓冲区，在其中返回请求的选项值。对于getsockopt()，optlen是一个值-结果参数，初始时包含了optval指向的缓冲区的大小，并在返回时修改为实际返回值的大小。如果没有要提供或返回的选项值，optval可以是NULL。
+
+optname和任何指定的选项都不经解释地传递给相应的协议模块进行解释。<sys/socket.h>头文件包含了套接字层级选项的定义，如下所述。其他协议层级的选项在格式和名称上有所不同；请参考手册第4节中相应条目。
+
+大多数套接字层级选项使用int类型作为optval参数。对于setsockopt()，如果要启用一个布尔型选项，则参数应该是非零值；如果要禁用一个选项，则参数应该是零。
+
+# Internet address操作
+
+## 1 获取socket绑定的地址
+
+```C++
+#include <sys/socket.h>
+int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+```
+
+> getsockname()用于返回套接字sockfd绑定的当前地址，存储在addr指向的缓冲区中。addrlen参数应该初始化为指示addr指向的空间（以字节为单位）的大小。返回时，它包含套接字地址的实际大小。如果提供的缓冲区太小，返回的地址将被截断；在这种情况下，addrlen将返回一个比调用时提供的值更大的值。  
+> getpeername()用于返回与套接字sockfd连接的对等方的地址，存储在addr指向的缓冲区中。addrlen参数应该初始化为指示addr指向的空间（以字节为单位）的大小。返回时，它包含返回的名称的实际大小（以字节为单位）。如果提供的缓冲区太小，名称将被截断。
+
+## 2 地址相关操作
+
+```C++
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+int inet_aton(const char *cp, struct in_addr *inp);
+
+in_addr_t inet_addr(const char *cp);
+
+in_addr_t inet_network(const char *cp);
+
+char *inet_ntoa(struct in_addr in);
+
+struct in_addr inet_makeaddr(in_addr_t net, in_addr_t host);
+
+in_addr_t inet_lnaof(struct in_addr in);
+
+in_addr_t inet_netof(struct in_addr in);
+```
+
+- inet_aton:函数将Internet主机地址cp从IPv4的点分十进制表示法转换为二进制形式（以网络字节顺序）并存储在inp指向的结构中。如果地址有效，inet_aton()返回非零值，如果无效，返回零。
+- inet_addr:将Internet主机地址cp从IPv4数字点表示法转换为网络字节顺序的二进制数据。如果输入无效，返回INADDR_NONE（通常为-1）。使用这个函数有问题，因为-1是一个有效的地址（255.255.255.255）。避免使用这个函数，而使用inet_aton()、inet_pton(3)或getaddrinfo(3)，它们提供了一种更清晰的方式来指示错误返回。
+- inet_network:将cp，一个IPv4数字点表示法的字符串，转换为主机字节顺序的数据，适合用作Internet网络地址。成功时，返回转换后的地址。如果输入无效，返回-1
+- inet_ntoa:将网络字节顺序给定的Internet主机地址in转换为IPv4点分十进制表示法的字符串。该字符串返回在一个静态分配的缓冲区中，后续的调用将覆盖它。
+- int_lnaof:返回Internet地址in的本地网络地址部分。返回值是主机字节顺序。
+- int_netof:返回Internet地址in的网络号部分。返回值是主机字节顺序。
+- int_makeaddr:是inet_netof()和inet_lnaof()的逆函数。它返回一个网络字节顺序的Internet主机地址，由主机字节顺序的网络号net和本地地址host组合而成
+
+## 3 域名相关
+
+```C++
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+struct addrinfo {
+    int              ai_flags;
+    int              ai_family;
+    int              ai_socktype;
+    int              ai_protocol;
+    socklen_t        ai_addrlen;
+    struct sockaddr *ai_addr;
+    char            *ai_canonname;
+    struct addrinfo *ai_next;
+};
+
+int getaddrinfo(const char *node, const char *service,
+                const struct addrinfo *hints,
+                struct addrinfo **res);
+
+void freeaddrinfo(struct addrinfo *res);
+
+#include <netdb.h>
+struct hostent {
+    char  *h_name;            /* official name of host */
+    char **h_aliases;         /* alias list */
+    int    h_addrtype;        /* host address type */
+    int    h_length;          /* length of address */
+    char **h_addr_list;       /* list of addresses */
+}
+
+extern int h_errno;
+
+struct hostent *gethostbyname(const char *name);
+
+#include <sys/socket.h>       /* for AF_INET */
+struct hostent *gethostbyaddr(const void *addr,
+                                socklen_t len, int type);
+
+ #include <netdb.h>
+struct servent {
+    char  *s_name;       /* official service name */
+    char **s_aliases;    /* alias list */
+    int    s_port;       /* port number */
+    char  *s_proto;      /* protocol to use */
+}
+
+struct servent *getservent(void);
+
+struct servent *getservbyname(const char *name, const char *proto);
+
+struct servent *getservbyport(int port, const char *proto);
+
+```
+
+- getaddrinfo:给定节点和服务，它们分别标识一个互联网主机和一个服务，getaddrinfo()函数返回一个或多个addrinfo结构，每个结构都包含一个可以在bind(2)或connect(2)调用中指定的互联网地址。getaddrinfo()函数将gethostbyname(3)和getservbyname(3)函数提供的功能合并到一个接口中，但与后者不同，getaddrinfo()是可重入的，并允许程序消除IPv4与IPv6之间的依赖性。提供了从主机名到地址的协议无关的转换。它可以处理名字到地址以及服务到端口这两种转换，返回的是一个addrinfo的结构（列表）指针。它还可以消除IPv4和IPv6之间的依赖性。
+- gethostbyname:gethostbyname()函数返回一个类型为hostent的结构，用于给定的主机名。这里的name可以是一个主机名或一个用标准点分法表示的IPv4地址（如inet_addr(3)所示）。如果name是一个IPv4地址，不进行查找，gethostbyname()只是将name复制到返回的hostent结构的h_name字段和其struct in_addr等价物复制到h_addr_list[0]字段。如果name不以点结尾，并且设置了环境变量HOSTALIASES，则首先在HOSTALIASES指向的别名文件中搜索name（参见hostname(7)中的文件格式）。除非name以点结尾，否则会搜索当前域及其父域。
+- getservbyname()函数返回一个servent结构，用于匹配使用协议proto的服务名的数据库中的条目。如果proto为NULL，则匹配任何协议。如果需要，会打开到数据库的连接。
+
+## 4 关于各个地址结构体
+
+```C++
+struct sockaddr {
+    sa_family_t sa_family; //地址族，最常用的是"AF_INET"(IPV4)和"AF_INET6"(IPV6)
+    char sa_data[14]; //包含套接字中的目标地址和端口信息
+};
+```
+
+```C++
+struct sockaddr_in {
+    sa_family_t sin_family; //地址族（Address Family），也就是地址类型
+    uint16_t sin_port; //16位的端口号
+    struct in_addr sin_addr; //32位IP地址
+    char sin_zero [ 8 ]; //不使用，一般用0填充
+};
+```
+
+> 这个结构体属于AF_INET地址族，用于表示网络地址。它和sockaddr结构体的长度相同，都是16个字节，但是它把IP地址和端口号分开了，而不是像sockaddr那样用一个成员sa_data来表示。
+
+```C++
+struct in_addr {
+    in_addr_t s_addr; //32位的IPv4地址
+};
+```
+
+> 这个结构体用来表示一个32位的IPv4地址。in_addr_t一般为32位的unsigned int，其字节顺序为网络字节序，即该无符号数采用大端字节序。其中每8位表示一个IP地址中的一个数值。
+
